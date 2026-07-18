@@ -1,0 +1,6 @@
+{
+  "name": "ExperienceLink",
+  "description": "ExperienceLink turns travel creator stories into personalized, bookable experiences with transparent creator attribution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

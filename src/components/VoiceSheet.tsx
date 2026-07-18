@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useVocalBridge, useTranscript, useAgentActions } from '@vocalbridgeai/react';
-import { Mic, MicOff, X, Sparkles, Plane } from 'lucide-react';
+import { Mic, MicOff, X, Sparkles, Plane, Check } from 'lucide-react';
 import { PreferenceItem, GeminiAnalysis, SabreFlightResult, SabreHotelResult } from '../types';
 
 interface ExtractedKeyword {
@@ -44,6 +44,9 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, onKe
   const [hotelResult, setHotelResult] = useState<SabreHotelResult | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const hasApiKey = !!import.meta.env.VITE_VOCAL_BRIDGE_API_KEY;
+  // Guards against double-tap/double-invoke firing connect() twice, which starts
+  // two sessions and produces two separate greetings in the transcript
+  const connectInFlightRef = useRef(false);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -105,11 +108,15 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, onKe
     entry.text.toLowerCase().includes('stay')
   ));
   const hotelSwapped = hotelResult !== null && hotelResult.originalHotelName && hotelResult.hotelName !== hotelResult.originalHotelName;
+  // Once Sabre has resolved both flight and hotel, the conversation's job is done —
+  // the CTA becomes an explicit payment handoff instead of a generic "analyze" action
+  const bookingReady = flightResult !== null && hotelResult !== null;
 
   const handleMicClick = async () => {
     if (isConnected) {
       await disconnect();
-    } else if (!isConnecting) {
+    } else if (!isConnecting && !connectInFlightRef.current) {
+      connectInFlightRef.current = true;
       try {
         await connect();
         // Mute mic while context loads so user can't speak before agent has context
@@ -132,6 +139,8 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, onKe
         await setMicrophoneEnabled(true);
       } catch (e) {
         console.error('VocalBridge connect error:', e);
+      } finally {
+        connectInFlightRef.current = false;
       }
     }
   };
@@ -320,10 +329,23 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, onKe
           </button>
           <button
             onClick={handleConfirm}
-            className="col-span-4 bg-brand-charcoal hover:bg-brand-charcoal/90 text-white font-sans uppercase tracking-widest py-3 px-4 rounded-full text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+            className={`col-span-4 font-sans uppercase tracking-widest py-3 px-4 rounded-full text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer ${
+              bookingReady
+                ? 'bg-emerald-600 hover:bg-emerald-600/90 text-white'
+                : 'bg-brand-charcoal hover:bg-brand-charcoal/90 text-white'
+            }`}
           >
-            <Sparkles className="w-3.5 h-3.5 text-brand-accent" />
-            <span>Analyze &amp; Match Experience</span>
+            {bookingReady ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-200" />
+                <span>Confirm &amp; Pay</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-3.5 h-3.5 text-brand-accent" />
+                <span>Analyze &amp; Match Experience</span>
+              </>
+            )}
           </button>
         </div>
       </div>

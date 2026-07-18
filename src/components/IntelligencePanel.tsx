@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { PreferenceItem, GeminiAnalysis } from '../types';
+import { PreferenceItem, GeminiAnalysis, SabreFlightResult, SabreHotelResult } from '../types';
 import { 
   Sparkles, 
   MapPin, 
@@ -18,6 +18,8 @@ interface IntelligencePanelProps {
   geminiStreamText?: string;
   geminiAnalysis?: GeminiAnalysis | null;
   geminiError?: string | null;
+  sabreFlight?: SabreFlightResult | null;
+  sabreHotel?: SabreHotelResult | null;
 }
 
 export const IntelligencePanel: React.FC<IntelligencePanelProps> = ({
@@ -27,6 +29,8 @@ export const IntelligencePanel: React.FC<IntelligencePanelProps> = ({
   geminiStreamText = '',
   geminiAnalysis = null,
   geminiError = null,
+  sabreFlight = null,
+  sabreHotel = null,
 }) => {
   const streamEndRef = useRef<HTMLDivElement>(null);
 
@@ -145,8 +149,31 @@ export const IntelligencePanel: React.FC<IntelligencePanelProps> = ({
 
                 {/* Target Hotel — full-width row */}
                 <div className="pt-1 border-t border-white/5">
-                  <span className="text-white/40 block font-mono text-[10px] mb-0.5">Target Hotel</span>
-                  {geminiAnalysis?.hotelName && geminiAnalysis.hotelName !== 'NA' ? (
+                  <span className="text-white/40 block font-mono text-[10px] mb-0.5">
+                    {sabreHotel ? 'Target Hotel — Sabre Resolved' : 'Target Hotel'}
+                  </span>
+                  {sabreHotel ? (
+                    <div className="space-y-0.5">
+                      {sabreHotel.originalHotelName && sabreHotel.hotelName !== sabreHotel.originalHotelName ? (
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-white/35 line-through text-[10px]">{sabreHotel.originalHotelName}</span>
+                          <span className="text-white/30 text-[10px]">→</span>
+                          <span className="text-white/90 font-medium text-[11px]">{sabreHotel.hotelName}</span>
+                          {sabreHotel.discountPercent > 0 && (
+                            <span className="text-[8px] font-mono font-bold bg-amber-400/15 text-amber-300 border border-amber-400/20 px-1.5 py-0.5 rounded-full">
+                              -{sabreHotel.discountPercent}%
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-white/90 font-medium text-[11px]">{sabreHotel.hotelName}</span>
+                      )}
+                      <span className="text-white/40 text-[10px] block leading-snug">{sabreHotel.hotelAddress}</span>
+                      <span className="text-emerald-400/80 text-[10px] block font-mono">
+                        ${sabreHotel.pricePerNight}/night · {sabreHotel.nights} night{sabreHotel.nights === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                  ) : geminiAnalysis?.hotelName && geminiAnalysis.hotelName !== 'NA' ? (
                     <div>
                       <span className="text-white/90 font-medium text-[11px]">{geminiAnalysis.hotelName}</span>
                       {geminiAnalysis.hotelAddress && geminiAnalysis.hotelAddress !== 'NA' && (
@@ -185,9 +212,10 @@ export const IntelligencePanel: React.FC<IntelligencePanelProps> = ({
                   const hardItems = getItemsByCat('hard-constraint');
                   const dateItem = hardItems.find(p => p.id === 'vb-kw-travel_date');
                   const peopleItem = hardItems.find(p => p.id === 'vb-kw-num_people');
+                  const durationItem = hardItems.find(p => p.id === 'vb-kw-trip_duration');
                   const budgetItem = hardItems.find(p => p.id === 'vb-kw-budget');
                   const flightItem = preferences.find(p => p.id === 'p-flights' && p.text !== 'Direct vs. connecting flight');
-                  if (!dateItem && !peopleItem && !budgetItem && !flightItem) return null;
+                  if (!dateItem && !peopleItem && !durationItem && !budgetItem && !flightItem) return null;
                   return (
                     <div className="grid grid-cols-2 gap-1.5 pb-2 border-b border-white/5">
                       {dateItem && (
@@ -200,6 +228,12 @@ export const IntelligencePanel: React.FC<IntelligencePanelProps> = ({
                         <div className="bg-white/5 rounded-lg px-2 py-1.5 text-center">
                           <span className="text-white/30 block text-[8px] font-mono uppercase tracking-wider">Party</span>
                           <span className="text-white/90 text-[10px] font-semibold leading-snug block mt-0.5">👥 {peopleItem.text}</span>
+                        </div>
+                      )}
+                      {durationItem && (
+                        <div className="bg-white/5 rounded-lg px-2 py-1.5 text-center">
+                          <span className="text-white/30 block text-[8px] font-mono uppercase tracking-wider">Duration</span>
+                          <span className="text-white/90 text-[10px] font-semibold leading-snug block mt-0.5">🌙 {durationItem.text}</span>
                         </div>
                       )}
                       {budgetItem && (

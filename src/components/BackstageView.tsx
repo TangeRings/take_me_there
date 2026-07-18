@@ -1,5 +1,6 @@
 import React from 'react';
 import { mockCreatorDashboard, originalExperience } from '../data';
+import { SabreFlightResult, SabreHotelResult } from '../types';
 import { 
   TrendingUp, 
   BarChart3, 
@@ -14,19 +15,35 @@ import {
   MessageSquare, 
   ShoppingBag, 
   Heart,
-  Share2
+  Share2,
+  DollarSign,
+  Plane,
+  Hotel,
+  Zap
 } from 'lucide-react';
 
 interface BackstageViewProps {
   selectedOption: 'A' | 'B' | 'C';
   onReset: () => void;
   onSetScreen: (n: number) => void;
+  sabreFlight?: SabreFlightResult | null;
+  sabreHotel?: SabreHotelResult | null;
+  bookingConfirmed?: boolean;
+  creatorCommission?: number;
+  sabreTotal?: number;
+  travelerDateText?: string;
 }
 
 export const BackstageView: React.FC<BackstageViewProps> = ({
   selectedOption,
   onReset,
-  onSetScreen
+  onSetScreen,
+  sabreFlight,
+  sabreHotel,
+  bookingConfirmed = false,
+  creatorCommission = 0,
+  sabreTotal = 0,
+  travelerDateText,
 }) => {
   // Let's compute details of the active traveler session (Nicole) depending on selectedOption
   const currentOptionInfo = selectedOption === 'A' 
@@ -273,6 +290,69 @@ export const BackstageView: React.FC<BackstageViewProps> = ({
         </div>
 
       </div>
+
+      {/* ── New Transaction Card (appears once a Sabre-mode booking is confirmed) ── */}
+      {bookingConfirmed && sabreFlight && sabreHotel && (
+        <div className="bg-emerald-950 border border-emerald-500/30 rounded-2xl p-5 space-y-4 shadow-lg">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <h4 className="text-xs font-mono uppercase tracking-wider font-bold text-emerald-300">
+                New Booking — Live Transaction
+              </h4>
+            </div>
+            <span className="text-[9px] font-mono text-emerald-400/70 border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 rounded">
+              via @mayaexplores affiliate link
+            </span>
+          </div>
+
+          {/* Booking detail row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+            <div className="bg-white/5 rounded-xl p-3 space-y-1 border border-white/5">
+              <span className="text-[9px] font-mono text-emerald-400/70 uppercase tracking-wider flex items-center gap-1">
+                <Plane className="w-3 h-3" /> Flight
+              </span>
+              <p className="font-bold text-white">{sabreFlight.origin} ➔ {sabreFlight.destination}</p>
+              <p className="text-white/50 text-[10px]">{sabreFlight.flightType} · {sabreFlight.departureTime}</p>
+            </div>
+            <div className="bg-white/5 rounded-xl p-3 space-y-1 border border-white/5">
+              <span className="text-[9px] font-mono text-emerald-400/70 uppercase tracking-wider flex items-center gap-1">
+                <Hotel className="w-3 h-3" /> Hotel
+              </span>
+              <p className="font-bold text-white">{sabreHotel.hotelName}</p>
+              <p className="text-white/50 text-[10px]">{sabreHotel.nights} nights · ${sabreHotel.pricePerNight}/night{sabreHotel.discountPercent > 0 ? ` · ${sabreHotel.discountPercent}% affiliate discount` : ''}</p>
+            </div>
+            <div className="bg-white/5 rounded-xl p-3 space-y-1 border border-white/5">
+              <span className="text-[9px] font-mono text-emerald-400/70 uppercase tracking-wider flex items-center gap-1">
+                <DollarSign className="w-3 h-3" /> Booking Value
+              </span>
+              <p className="font-bold text-white text-base">${sabreTotal.toLocaleString()} USD</p>
+              {travelerDateText && <p className="text-white/50 text-[10px]">{travelerDateText}</p>}
+            </div>
+          </div>
+
+          {/* Creator earnings */}
+          <div className="border-t border-emerald-500/20 pt-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <p className="text-[10px] font-mono text-emerald-400/70 uppercase tracking-wider">Your affiliate commission (8% of hotel)</p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-mono font-bold text-emerald-400">+${creatorCommission}</span>
+                <span className="text-[10px] text-emerald-400/60 font-mono">dispatched via PayPal SPLIT</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-[11px] text-emerald-300/80 bg-white/5 px-4 py-2.5 rounded-xl border border-white/5 max-w-sm">
+              <Zap className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+              <span>
+                {sabreHotel.discountPercent > 0
+                  ? `Traveler saved ${sabreHotel.discountPercent}% on hotel because they booked through your link. Commission queued for payout.`
+                  : 'Commission auto-calculated and queued for payout.'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

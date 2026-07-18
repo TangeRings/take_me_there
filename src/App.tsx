@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { VocalBridgeProvider } from '@vocalbridgeai/react';
 import { initialPreferences, tradeOffOptions } from './data';
-import { PreferenceItem, GeminiAnalysis } from './types';
+import { PreferenceItem, GeminiAnalysis, SabreFlightResult, SabreHotelResult } from './types';
 import { MobileFrame } from './components/MobileFrame';
 import { IntelligencePanel } from './components/IntelligencePanel';
 import { BackstageView } from './components/BackstageView';
@@ -36,6 +36,9 @@ export default function App() {
   const [geminiAnalysis, setGeminiAnalysis] = useState<GeminiAnalysis | null>(null);
   const [geminiStreamText, setGeminiStreamText] = useState<string>('');
   const [geminiError, setGeminiError] = useState<string | null>(null);
+  // Sabre MCP results, resolved live during the voice conversation
+  const [sabreFlight, setSabreFlight] = useState<SabreFlightResult | null>(null);
+  const [sabreHotel, setSabreHotel] = useState<SabreHotelResult | null>(null);
 
   // Gemini callbacks (stable references via useCallback)
   const handleGeminiToken = useCallback((token: string) => {
@@ -72,9 +75,20 @@ export default function App() {
     setGeminiAnalysis(null);
     setGeminiStreamText('');
     setGeminiError(null);
+    setSabreFlight(null);
+    setSabreHotel(null);
   };
 
   const selectedData = tradeOffOptions.find(o => o.id === selectedOption) || tradeOffOptions[0];
+  const isSabreMode = !!(sabreFlight && sabreHotel);
+  // Discount-aware hotel cost (mirrors Screen 8 calculation)
+  const sabreHotelDiscount = sabreHotel ? sabreHotel.discountPercent : 0;
+  const sabreHotelFullCost = sabreHotel ? Math.round(sabreHotel.pricePerNight * sabreHotel.nights) : 0;
+  const sabreHotelCostAfterDiscount = Math.round(sabreHotelFullCost * (1 - sabreHotelDiscount / 100));
+  const sabreTotal = isSabreMode ? Math.round(sabreFlight!.fare) + sabreHotelCostAfterDiscount : 0;
+  const sabreDateText = preferences.find(p => p.id === 'vb-kw-travel_date')?.text;
+  // Creator commission: 8% of the discounted hotel cost
+  const creatorCommission = Math.round(sabreHotelCostAfterDiscount * 0.08);
 
   const vbApiKey = import.meta.env.VITE_VOCAL_BRIDGE_API_KEY as string | undefined;
 
@@ -144,6 +158,12 @@ export default function App() {
                 setViewMode('traveler');
                 setCurrentScreen(n);
               }}
+              sabreFlight={sabreFlight}
+              sabreHotel={sabreHotel}
+              bookingConfirmed={isSabreMode && showCheckoutModal}
+              creatorCommission={creatorCommission}
+              sabreTotal={sabreTotal}
+              travelerDateText={sabreDateText}
             />
           </div>
         ) : (
@@ -162,7 +182,8 @@ export default function App() {
                     2: 3, // Voice input → Preference confirmation
                     4: 3, // Trade-off → Preference confirmation
                     5: 4, // Itinerary → Trade-off
-                    6: 5, // Final/booking → Itinerary
+                    6: 5, // Attribution → Itinerary
+                    8: 5, // Sabre booking confirmation → Itinerary
                   };
                   const prev = prevMap[currentScreen];
                   if (prev !== undefined) setCurrentScreen(prev);
@@ -184,6 +205,12 @@ export default function App() {
                   geminiAnalysis={geminiAnalysis}
                   geminiError={geminiError}
                   onGeminiError={setGeminiError}
+                  sabreFlight={sabreFlight}
+                  sabreHotel={sabreHotel}
+                  onSabreUpdate={(flight, hotel) => {
+                    setSabreFlight(flight);
+                    setSabreHotel(hotel);
+                  }}
                 />
               </MobileFrame>
             </div>
@@ -197,6 +224,8 @@ export default function App() {
                 geminiStreamText={geminiStreamText}
                 geminiAnalysis={geminiAnalysis}
                 geminiError={geminiError}
+                sabreFlight={sabreFlight}
+                sabreHotel={sabreHotel}
               />
             </div>
 
@@ -222,7 +251,7 @@ export default function App() {
               </div>
               <h3 className="text-2xl font-serif text-brand-charcoal font-bold">Booking Confirmed!</h3>
               <p className="text-xs text-brand-charcoal/60 leading-relaxed px-4">
-                Thank you, Nicole. Your personalized version of <strong>“Kyoto, Slowly”</strong> is safely locked in and synced with Kyoto transit registries.
+                Thank you, Nicole. Your personalized version of <strong>“Kyoto, Slowly”</strong> is safely locked in{isSabreMode ? ', with live fares from Sabre.' : ' and synced with Kyoto transit registries.'}
               </p>
             </div>
 
@@ -233,15 +262,15 @@ export default function App() {
               <div className="space-y-2">
                 <div className="flex justify-between">
                   <span className="text-brand-charcoal/60">Selected Package</span>
-                  <span className="font-serif font-bold text-brand-charcoal">Split-Stay Custom Pack</span>
+                  <span className="font-serif font-bold text-brand-charcoal">{isSabreMode ? sabreHotel!.hotelName : 'Split-Stay Custom Pack'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-brand-charcoal/60">Dates Selected</span>
-                  <span className="font-mono text-brand-charcoal">Oct 14 &ndash; Oct 18, 2026</span>
+                  <span className="font-mono text-brand-charcoal">{isSabreMode ? (sabreDateText || 'NA') : 'Oct 14 \u2013 Oct 18, 2026'}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-brand-charcoal/60">Total Cost Paid</span>
-                  <span className="font-mono font-bold text-brand-sage">${selectedData.price} USD</span>
+                  <span className="font-mono font-bold text-brand-sage">${isSabreMode ? sabreTotal.toLocaleString() : selectedData.price} USD</span>
                 </div>
               </div>
 
@@ -300,6 +329,7 @@ export default function App() {
   const vbTokenAuth = {
     tokenUrl: '/api/vb-token',
     body: geminiAnalysis ? {
+      context_origin: 'San Francisco (SFO)',
       context_destination: geminiAnalysis.destination,
       context_hotel: geminiAnalysis.hotelName,
       context_experience: geminiAnalysis.experienceType,

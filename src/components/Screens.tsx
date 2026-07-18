@@ -8,7 +8,9 @@ import {
   PreferenceItem, 
   TradeOffOption, 
   PreferenceCategory,
-  GeminiAnalysis
+  GeminiAnalysis,
+  SabreFlightResult,
+  SabreHotelResult
 } from '../types';
 import { analyzeInstagramPost } from '../services/gemini';
 import { 
@@ -56,6 +58,9 @@ interface ScreenProps {
   onGeminiError: (msg: string) => void;
   geminiAnalysis?: GeminiAnalysis | null;
   geminiError?: string | null;
+  sabreFlight?: SabreFlightResult | null;
+  sabreHotel?: SabreHotelResult | null;
+  onSabreUpdate?: (flight: SabreFlightResult | null, hotel: SabreHotelResult | null) => void;
 }
 
 export const Screens: React.FC<ScreenProps> = ({
@@ -74,6 +79,9 @@ export const Screens: React.FC<ScreenProps> = ({
   onGeminiError,
   geminiAnalysis,
   geminiError,
+  sabreFlight,
+  sabreHotel,
+  onSabreUpdate,
 }) => {
   // Voice input transcription state
   const [typedVoiceText, setTypedVoiceText] = useState('');
@@ -1067,14 +1075,21 @@ export const Screens: React.FC<ScreenProps> = ({
           <div className="absolute inset-x-0 bottom-0 z-50">
             <VoiceSheet
               onClose={() => setShowVoiceSheet(false)}
-              onConfirm={(constraints) => {
+              onConfirm={(constraints, sabre) => {
                 setPreferences(prev => [
                   ...prev.filter(p => p.category !== 'hard-constraint'),
                   ...constraints,
                 ]);
                 setShowVoiceSheet(false);
                 setVoiceStatus('analyzing');
-                setScreen(4);
+                // If Sabre already resolved a real flight + hotel during the
+                // conversation, skip the mocked trade-off comparison (Screen 4)
+                // and go straight to the itinerary with real numbers.
+                if (sabre?.flight && sabre?.hotel) {
+                  setScreen(5);
+                } else {
+                  setScreen(4);
+                }
               }}
               onKeywordUpdate={(pref) => {
                 setPreferences(prev => [
@@ -1082,6 +1097,7 @@ export const Screens: React.FC<ScreenProps> = ({
                   pref,
                 ]);
               }}
+              onSabreUpdate={onSabreUpdate}
               geminiAnalysis={geminiAnalysis}
             />
           </div>
@@ -1250,41 +1266,65 @@ export const Screens: React.FC<ScreenProps> = ({
     const selectedData = tradeOffOptions.find(o => o.id === selectedOption) || tradeOffOptions[0];
     const [activeTab, setActiveTab] = useState<'experience' | 'itinerary' | 'budget'>('experience');
 
-    // Dynamic budget calculation depending on selected option
-    const flightsCost = selectedOption === 'B' ? 220 : 760;
-    const featuredHotelCost = selectedOption === 'A' ? 480 : selectedOption === 'B' ? 1440 : 0;
-    const alternateHotelCost = selectedOption === 'A' ? 300 : selectedOption === 'B' ? 0 : 450;
+    // Sabre-resolved mode: real flight + hotel came from the voice conversation
+    const isSabreMode = !!(sabreFlight && sabreHotel);
+
+    const findPref = (id: string) => preferences.find(p => p.id === id)?.text;
+    const durationText = findPref('vb-kw-trip_duration');
+    const budgetText = findPref('vb-kw-budget');
+    const parsedBudget = budgetText ? parseInt(budgetText.replace(/[^0-9]/g, ''), 10) : NaN;
+    const budgetTarget = !isNaN(parsedBudget) && parsedBudget > 0 ? parsedBudget : 1800;
+
+    // Dynamic budget calculation depending on selected option (legacy mocked path)
+    const legacyFlightsCost = selectedOption === 'B' ? 220 : 760;
+    const legacyFeaturedHotelCost = selectedOption === 'A' ? 480 : selectedOption === 'B' ? 1440 : 0;
+    const legacyAlternateHotelCost = selectedOption === 'A' ? 300 : selectedOption === 'B' ? 0 : 450;
     const activitiesCost = selectedOption === 'A' ? 220 : selectedOption === 'B' ? 140 : 250;
-    const totalCost = selectedData.price;
-    const underBudgetDiff = 1800 - totalCost;
+
+    // Sabre-resolved costs
+    const sabreHotelCost = isSabreMode ? Math.round(sabreHotel!.pricePerNight * sabreHotel!.nights) : 0;
+    const sabreFlightCost = isSabreMode ? Math.round(sabreFlight!.fare) : 0;
+
+    const flightsCost = isSabreMode ? sabreFlightCost : legacyFlightsCost;
+    const featuredHotelCost = isSabreMode ? sabreHotelCost : legacyFeaturedHotelCost;
+    const alternateHotelCost = isSabreMode ? 0 : legacyAlternateHotelCost;
+    const totalCost = isSabreMode ? sabreFlightCost + sabreHotelCost + activitiesCost : selectedData.price;
+    const underBudgetDiff = budgetTarget - totalCost;
+    const hotelSwapped = isSabreMode && sabreHotel!.originalHotelName && sabreHotel!.hotelName !== sabreHotel!.originalHotelName;
 
     return (
       <div id="screen-personalized-result" className="flex flex-col h-full bg-brand-cream overflow-y-auto">
         {/* Sticky Header */}
         <div className="flex items-center justify-between p-4 border-b border-brand-charcoal/5 bg-white/40 backdrop-blur-sm sticky top-0 z-10 flex-shrink-0">
-          <button onClick={() => setScreen(4)} className="text-xs text-brand-charcoal/60 hover:text-brand-charcoal">
+          <button onClick={() => setScreen(isSabreMode ? 3 : 4)} className="text-xs text-brand-charcoal/60 hover:text-brand-charcoal">
             ← Refine
           </button>
-          <span className="text-xs font-serif font-medium text-brand-charcoal">Your Adaptation</span>
+          <span className="text-xs font-serif font-medium text-brand-charcoal">
+            {isSabreMode ? 'Sabre-Resolved Trip' : 'Your Adaptation'}
+          </span>
           <div className="w-10"></div>
         </div>
 
         {/* Hero Card */}
         <div className="p-4 bg-white border-b border-brand-charcoal/5 space-y-3 flex-shrink-0">
           <div className="space-y-1">
-            <span className="text-[9px] font-mono uppercase tracking-widest text-brand-accent font-bold">Personalized Route Generated</span>
+            <span className="text-[9px] font-mono uppercase tracking-widest text-brand-accent font-bold">
+              {isSabreMode ? 'Live Flight & Hotel via Sabre' : 'Personalized Route Generated'}
+            </span>
             <h1 className="text-2xl font-serif text-brand-charcoal leading-tight font-medium">Your version of “Kyoto, Slowly”</h1>
           </div>
 
           <div className="flex items-center gap-3 py-1.5 border-y border-brand-charcoal/5">
             <div>
               <p className="text-[9px] uppercase tracking-wider text-brand-charcoal/40 font-mono">Duration</p>
-              <p className="text-xs font-serif font-bold text-brand-charcoal">4 Days / 3 Nights</p>
+              <p className="text-xs font-serif font-bold text-brand-charcoal">{durationText || '4 Days / 3 Nights'}</p>
             </div>
             <div className="w-px h-6 bg-brand-charcoal/10" />
             <div>
               <p className="text-[9px] uppercase tracking-wider text-brand-charcoal/40 font-mono">Origin</p>
-              <p className="text-xs font-serif font-bold text-brand-charcoal">San Francisco (SFO)</p>
+              <p className="text-xs font-serif font-bold text-brand-charcoal">
+                {isSabreMode ? sabreFlight!.origin : 'San Francisco (SFO)'}
+              </p>
             </div>
             <div className="w-px h-6 bg-brand-charcoal/10" />
             <div>
@@ -1295,7 +1335,7 @@ export const Screens: React.FC<ScreenProps> = ({
 
           {/* Under Budget Alert */}
           <div className="flex items-center justify-between bg-brand-beige/40 px-3 py-2 rounded-xl text-[11px] border border-brand-charcoal/5">
-            <span className="text-brand-charcoal/70">Budget target: $1,800</span>
+            <span className="text-brand-charcoal/70">Budget target: ${budgetTarget.toLocaleString()}</span>
             <span className="font-mono font-bold text-brand-sage">
               {underBudgetDiff > 0 ? `$${underBudgetDiff} under your budget` : 'On budget'}
             </span>
@@ -1317,10 +1357,18 @@ export const Screens: React.FC<ScreenProps> = ({
               </div>
               <div className="space-y-0.5">
                 <div className="flex items-center gap-2">
-                  <p className="font-bold text-brand-charcoal">SFO ➔ KIX (Direct Flight)</p>
+                  <p className="font-bold text-brand-charcoal">
+                    {isSabreMode
+                      ? `${sabreFlight!.origin} ➔ ${sabreFlight!.destination} (${sabreFlight!.flightType})`
+                      : 'SFO ➔ KIX (Direct Flight)'}
+                  </p>
                   <span className="text-[9px] font-mono text-emerald-600 font-bold">● Locked</span>
                 </div>
-                <p className="text-[10px] text-brand-charcoal/50">Oct 14, 2026 • United Airlines • Seat Reserved</p>
+                <p className="text-[10px] text-brand-charcoal/50">
+                  {isSabreMode
+                    ? `${sabreFlight!.departureTime} • via Sabre • ${sabreFlight!.currency} $${sabreFlight!.fare}`
+                    : 'Oct 14, 2026 • United Airlines • Seat Reserved'}
+                </p>
               </div>
             </div>
 
@@ -1331,12 +1379,33 @@ export const Screens: React.FC<ScreenProps> = ({
               </div>
               <div className="space-y-0.5">
                 <div className="flex items-center gap-2">
-                  <p className="font-bold text-brand-charcoal">
-                    {selectedOption === 'A' ? 'Split Stay: 1n Shinmonzen, 2n Gion Terrace' : selectedOption === 'B' ? '3 nights: The Shinmonzen' : '3 nights: Gion Terrace Boutique'}
-                  </p>
+                  {isSabreMode ? (
+                    hotelSwapped ? (
+                      <p className="font-bold text-brand-charcoal flex items-center gap-1.5">
+                        <span className="text-brand-charcoal/40 line-through font-normal">{sabreHotel!.originalHotelName}</span>
+                        <span className="text-brand-charcoal/30">→</span>
+                        <span>{sabreHotel!.hotelName}</span>
+                      </p>
+                    ) : (
+                      <p className="font-bold text-brand-charcoal">{sabreHotel!.hotelName}</p>
+                    )
+                  ) : (
+                    <p className="font-bold text-brand-charcoal">
+                      {selectedOption === 'A' ? 'Split Stay: 1n Shinmonzen, 2n Gion Terrace' : selectedOption === 'B' ? '3 nights: The Shinmonzen' : '3 nights: Gion Terrace Boutique'}
+                    </p>
+                  )}
                   <span className="text-[9px] font-mono text-emerald-600 font-bold">● Confirmed</span>
+                  {isSabreMode && sabreHotel!.discountPercent > 0 && (
+                    <span className="text-[9px] font-mono font-bold bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full">
+                      -{sabreHotel!.discountPercent}%
+                    </span>
+                  )}
                 </div>
-                <p className="text-[10px] text-brand-charcoal/50">Gion District, Kyoto • Boutique Aesthetics</p>
+                <p className="text-[10px] text-brand-charcoal/50">
+                  {isSabreMode
+                    ? `${sabreHotel!.hotelAddress} • ${sabreHotel!.nights} night${sabreHotel!.nights === 1 ? '' : 's'} • $${sabreHotel!.pricePerNight}/night`
+                    : 'Gion District, Kyoto • Boutique Aesthetics'}
+                </p>
               </div>
             </div>
           </div>
@@ -1452,7 +1521,7 @@ export const Screens: React.FC<ScreenProps> = ({
                     <div className="flex justify-between text-xs font-sans">
                       <span className="text-brand-charcoal/70 flex items-center gap-1.5">
                         <Plane className="w-3.5 h-3.5 text-brand-charcoal/50" />
-                        Airfare (SFO to KIX)
+                        {isSabreMode ? `Airfare (${sabreFlight!.origin} to ${sabreFlight!.destination})` : 'Airfare (SFO to KIX)'}
                       </span>
                       <span className="font-mono font-bold text-brand-charcoal">${flightsCost}</span>
                     </div>
@@ -1467,7 +1536,7 @@ export const Screens: React.FC<ScreenProps> = ({
                       <div className="flex justify-between text-xs font-sans">
                         <span className="text-brand-charcoal/70 flex items-center gap-1.5">
                           <Hotel className="w-3.5 h-3.5 text-brand-charcoal/50" />
-                          The Shinmonzen Stay
+                          {isSabreMode ? `${sabreHotel!.hotelName} (${sabreHotel!.nights}n)` : 'The Shinmonzen Stay'}
                         </span>
                         <span className="font-mono font-bold text-brand-charcoal">${featuredHotelCost}</span>
                       </div>
@@ -1527,11 +1596,11 @@ export const Screens: React.FC<ScreenProps> = ({
             <span>Refine with Voice</span>
           </button>
           <button 
-            onClick={() => setScreen(6)}
+            onClick={() => setScreen(isSabreMode ? 8 : 6)}
             className="w-full bg-brand-charcoal hover:bg-brand-charcoal/90 text-white py-3 rounded-full text-[10px] font-bold font-sans uppercase tracking-widest transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1"
           >
             <Check className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Book & Checkout</span>
+            <span>{isSabreMode ? 'Confirm & Pay' : 'Book & Checkout'}</span>
           </button>
         </div>
       </div>
@@ -1641,6 +1710,169 @@ export const Screens: React.FC<ScreenProps> = ({
           >
             <span>Continue to checkout</span>
             <ArrowRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Screen 8: Booking Confirmation — Sabre-resolved flight + hotel, travel-agency style summary
+  if (currentScreen === 8) {
+    const findPref = (id: string) => preferences.find(p => p.id === id)?.text;
+    const dateText = findPref('vb-kw-travel_date') || 'NA';
+    const peopleText = findPref('vb-kw-num_people') || 'NA';
+    const durationText = findPref('vb-kw-trip_duration') || 'NA';
+
+    // Apply influencer affiliate discount to hotel (discountPercent from agent, e.g. 5%)
+    const hotelDiscount = sabreHotel ? sabreHotel.discountPercent : 0;
+    const hotelFullCost = sabreHotel ? Math.round(sabreHotel.pricePerNight * sabreHotel.nights) : 0;
+    const hotelSavings = Math.round(hotelFullCost * hotelDiscount / 100);
+    const hotelCost = hotelFullCost - hotelSavings;
+    const flightCost = sabreFlight ? Math.round(sabreFlight.fare) : 0;
+    const grandTotal = flightCost + hotelCost;
+    const hotelSwapped = !!(sabreHotel?.originalHotelName && sabreHotel.hotelName !== sabreHotel.originalHotelName);
+    // Creator affiliate commission: 8% of the discounted hotel booking value
+    const creatorCommission = Math.round(hotelCost * 0.08);
+
+    return (
+      <div id="screen-booking-confirmation" className="flex flex-col h-full bg-brand-cream overflow-y-auto">
+        {/* Sticky Header */}
+        <div className="flex items-center justify-between p-4 border-b border-brand-charcoal/5 bg-white/40 backdrop-blur-sm sticky top-0 z-10 flex-shrink-0">
+          <button onClick={() => setScreen(5)} className="text-xs text-brand-charcoal/60 hover:text-brand-charcoal">
+            ← Itinerary
+          </button>
+          <span className="text-xs font-serif font-medium text-brand-charcoal">Booking Confirmation</span>
+          <div className="w-10"></div>
+        </div>
+
+        <div className="p-4 space-y-4 flex-grow">
+          {/* Success-style header */}
+          <div className="text-center space-y-1.5 pt-2">
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
+              <Check className="w-6 h-6" />
+            </div>
+            <h2 className="text-lg font-serif font-semibold text-brand-charcoal">Ready to Book</h2>
+            <p className="text-[11px] text-brand-charcoal/55 leading-relaxed px-4">
+              Live fares and availability resolved via Sabre. Review the details below before paying.
+            </p>
+          </div>
+
+          {/* Trip Summary — dates, party, duration like a travel agency itinerary */}
+          <div className="bg-white rounded-2xl p-4 border border-brand-charcoal/5 shadow-sm space-y-3">
+            <h3 className="text-[10px] font-mono tracking-wider uppercase text-brand-charcoal/55 font-bold">Trip Summary</h3>
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div>
+                <p className="text-[9px] uppercase tracking-wider text-brand-charcoal/40 font-mono">Destination</p>
+                <p className="font-serif font-bold text-brand-charcoal">{geminiAnalysis?.destination && geminiAnalysis.destination !== 'NA' ? geminiAnalysis.destination : 'NA'}</p>
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-wider text-brand-charcoal/40 font-mono">Travel Dates</p>
+                <p className="font-serif font-bold text-brand-charcoal">{dateText}</p>
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-wider text-brand-charcoal/40 font-mono">Travelers</p>
+                <p className="font-serif font-bold text-brand-charcoal">{peopleText}</p>
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-wider text-brand-charcoal/40 font-mono">Duration</p>
+                <p className="font-serif font-bold text-brand-charcoal">{durationText}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Flight Booking Card */}
+          {sabreFlight && (
+            <div className="bg-white rounded-2xl p-4 border border-brand-charcoal/5 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between border-b border-brand-charcoal/5 pb-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-sky-600 font-bold flex items-center gap-1.5">
+                  <Plane className="w-3.5 h-3.5" />
+                  Flight
+                </span>
+                <span className="text-[9px] font-mono bg-emerald-500/10 text-emerald-700 px-2 py-0.5 rounded-full font-bold border border-emerald-500/20">via Sabre</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <div>
+                  <p className="font-bold text-brand-charcoal">{sabreFlight.origin} ➔ {sabreFlight.destination}</p>
+                  <p className="text-[10px] text-brand-charcoal/50">{sabreFlight.flightType} • {sabreFlight.departureTime}</p>
+                </div>
+                <span className="font-mono font-bold text-brand-charcoal text-sm">{sabreFlight.currency} ${flightCost}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Hotel Booking Card */}
+          {sabreHotel && (
+            <div className="bg-white rounded-2xl p-4 border border-brand-charcoal/5 shadow-sm space-y-2.5">
+              <div className="flex items-center justify-between border-b border-brand-charcoal/5 pb-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-amber-600 font-bold flex items-center gap-1.5">
+                  <Hotel className="w-3.5 h-3.5" />
+                  Hotel
+                </span>
+                {hotelDiscount > 0 && (
+                  <span className="text-[9px] font-mono bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-bold border border-amber-200 flex items-center gap-1">
+                    🎁 {hotelDiscount}% Maya affiliate discount
+                  </span>
+                )}
+              </div>
+              <div className="flex items-start justify-between text-xs">
+                <div className="min-w-0 pr-2">
+                  {hotelSwapped && (
+                    <p className="text-[9px] text-brand-charcoal/40 line-through leading-tight">{sabreHotel.originalHotelName}</p>
+                  )}
+                  <p className="font-bold text-brand-charcoal leading-tight">{sabreHotel.hotelName}</p>
+                  <p className="text-[10px] text-brand-charcoal/50 leading-snug">{sabreHotel.hotelAddress}</p>
+                  <p className="text-[10px] text-brand-charcoal/50 mt-0.5">
+                    {sabreHotel.nights} night{sabreHotel.nights === 1 ? '' : 's'} · ${sabreHotel.pricePerNight}/night
+                    {hotelDiscount > 0 && (
+                      <span className="ml-1 line-through text-brand-charcoal/30">${hotelFullCost}</span>
+                    )}
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <span className="font-mono font-bold text-brand-charcoal text-sm block">${hotelCost}</span>
+                  {hotelSavings > 0 && (
+                    <span className="text-[9px] font-mono text-emerald-600 font-bold">−${hotelSavings} saved</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Price Breakdown */}
+          <div className="bg-brand-beige/40 rounded-2xl p-4 border border-brand-charcoal/10 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-brand-charcoal/60">Flight</span>
+              <span className="font-mono text-brand-charcoal">${flightCost}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-brand-charcoal/60">Hotel (after {hotelDiscount > 0 ? `${hotelDiscount}% discount` : 'Sabre rate'})</span>
+              <span className="font-mono text-brand-charcoal">${hotelCost}</span>
+            </div>
+            {hotelSavings > 0 && (
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-emerald-600 flex items-center gap-1">🎁 Affiliate savings (Maya's link)</span>
+                <span className="font-mono text-emerald-600 font-bold">−${hotelSavings}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between pt-2 border-t border-brand-charcoal/10">
+              <span className="text-sm font-serif font-bold text-brand-charcoal">Total Due</span>
+              <span className="text-lg font-mono font-bold text-brand-sage">${grandTotal.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <p className="text-[9px] text-brand-charcoal/40 text-center italic leading-normal px-4">
+            Fares confirmed via Sabre · Affiliate discount via @mayaexplores · Prices lock in once you pay.
+          </p>
+        </div>
+
+        {/* Confirm & Pay CTA */}
+        <div className="p-4 bg-white border-t border-brand-charcoal/5 sticky bottom-0 z-10 flex-shrink-0">
+          <button 
+            onClick={() => setShowCheckoutModal(true)}
+            className="w-full bg-brand-charcoal hover:bg-brand-charcoal/90 text-white font-sans uppercase tracking-widest py-3.5 px-4 rounded-full text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+          >
+            <Check className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Confirm & Pay ${grandTotal.toLocaleString()}</span>
           </button>
         </div>
       </div>

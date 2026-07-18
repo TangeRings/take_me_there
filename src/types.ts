@@ -80,3 +80,22 @@ export interface GeminiAnalysis {
   hotelName: string;
   hotelAddress: string;
 }
+
+export interface SabreFlightResult {
+  fare: number;
+  currency: string;
+  flightType: string;
+  departureTime: string;
+  origin: string;
+  destination: string;
+}
+
+export interface SabreHotelResult {
+  hotelName: string;
+  hotelAddress: string;
+  pricePerNight: number;
+  nights: number;
+  discountPercent: number;
+  originalHotelName: string;
+  available: boolean;
+}

@@ -69,3 +69,14 @@ export interface BudgetBreakdown {
   activities: number;
   total: number;
 }
+
+export interface GeminiAnalysis {
+  destination: string;
+  keywords: string[];
+  experienceType: string;
+  budgetEstimate: string | null;
+  pace: string;
+  signatureElements: string[];
+  hotelName: string;
+  hotelAddress: string;
+}

@@ -1,10 +1,21 @@
 import React from 'react';
+import { ChevronLeft } from 'lucide-react';
 
 interface MobileFrameProps {
   children: React.ReactNode;
+  currentScreen?: number;
+  totalScreens?: number;
+  onBack?: () => void;
 }
 
-export const MobileFrame: React.FC<MobileFrameProps> = ({ children }) => {
+export const MobileFrame: React.FC<MobileFrameProps> = ({
+  children,
+  currentScreen = 1,
+  totalScreens = 6,
+  onBack,
+}) => {
+  const canGoBack = currentScreen > 1 && onBack;
+
   return (
     <div className="relative mx-auto w-full max-w-[390px] h-[780px] bg-[#1a1917] rounded-[52px] p-3.5 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.5)] border-4 border-[#3c3a35] flex flex-col overflow-hidden ring-1 ring-white/10">
       
@@ -23,8 +34,34 @@ export const MobileFrame: React.FC<MobileFrameProps> = ({ children }) => {
       <div className="w-full h-full bg-brand-cream rounded-[40px] overflow-hidden relative flex flex-col border border-black/10 select-none">
         
         {/* Simulated iOS Status Bar */}
-        <div className="h-10 px-6 pt-2 pb-1 flex items-end justify-between text-brand-charcoal text-[11px] font-semibold tracking-tight bg-transparent select-none z-40 relative flex-shrink-0">
-          <span>9:41</span>
+        <div className="h-10 px-3 pt-2 pb-1 flex items-end justify-between text-brand-charcoal text-[11px] font-semibold tracking-tight bg-transparent select-none z-40 relative flex-shrink-0">
+          {/* Back button or clock */}
+          {canGoBack ? (
+            <button
+              onClick={onBack}
+              className="flex items-center gap-0.5 text-brand-charcoal/70 hover:text-brand-charcoal active:scale-95 transition-all cursor-pointer pr-1"
+              aria-label="Go back"
+            >
+              <ChevronLeft className="w-4 h-4 -ml-1" />
+              <span className="text-[11px] font-semibold">{currentScreen - 1}</span>
+            </button>
+          ) : (
+            <span className="pl-3">9:41</span>
+          )}
+
+          {/* Step indicator pill (centre) */}
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-1.5 flex items-center gap-[3px]">
+            {Array.from({ length: totalScreens }).map((_, i) => (
+              <span
+                key={i}
+                className={`rounded-full transition-all ${
+                  i + 1 === currentScreen
+                    ? 'w-3 h-1 bg-brand-charcoal'
+                    : 'w-1 h-1 bg-brand-charcoal/25'
+                }`}
+              />
+            ))}
+          </div>
           
           <div className="flex items-center gap-1.5 text-xs">
             {/* Cellular strength dots */}

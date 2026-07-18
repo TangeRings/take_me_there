@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
+import { VocalBridgeProvider } from '@vocalbridgeai/react';
 import { initialPreferences, tradeOffOptions } from './data';
-import { PreferenceItem } from './types';
+import { PreferenceItem, GeminiAnalysis } from './types';
 import { MobileFrame } from './components/MobileFrame';
 import { IntelligencePanel } from './components/IntelligencePanel';
 import { BackstageView } from './components/BackstageView';
@@ -25,22 +26,59 @@ export default function App() {
   const [viewMode, setViewMode] = useState<'traveler' | 'creator'>('traveler');
   const [currentScreen, setCurrentScreen] = useState<number>(1);
   const [selectedOption, setSelectedOption] = useState<'A' | 'B' | 'C'>('A');
-  const [preferences, setPreferences] = useState<PreferenceItem[]>(initialPreferences);
+  // Only flexible items at startup — must-keep / preference come from Gemini,
+  // hard-constraints come from voice input (screen 2)
+  const [preferences, setPreferences] = useState<PreferenceItem[]>(
+    initialPreferences.filter(p => p.category === 'flexible')
+  );
   const [voiceStatus, setVoiceStatus] = useState<'idle' | 'listening' | 'analyzing' | 'done'>('idle');
   const [showCheckoutModal, setShowCheckoutModal] = useState<boolean>(false);
+  const [geminiAnalysis, setGeminiAnalysis] = useState<GeminiAnalysis | null>(null);
+  const [geminiStreamText, setGeminiStreamText] = useState<string>('');
+  const [geminiError, setGeminiError] = useState<string | null>(null);
+
+  // Gemini callbacks (stable references via useCallback)
+  const handleGeminiToken = useCallback((token: string) => {
+    setGeminiStreamText(prev => prev + token);
+  }, []);
+
+  const handleGeminiComplete = useCallback((analysis: GeminiAnalysis) => {
+    setGeminiAnalysis(analysis);
+    // Map extracted elements to preferences.
+    // Hard constraints are intentionally EMPTY here — they come from the traveler's voice input (screen 2).
+    const newPreferences: PreferenceItem[] = [
+      ...analysis.signatureElements.slice(0, 2).map((el, i) => ({
+        id: `g-must-${i}`,
+        text: el,
+        category: 'must-keep' as const,
+      })),
+      ...analysis.keywords.slice(0, 3).map((kw, i) => ({
+        id: `g-pref-${i}`,
+        text: kw,
+        category: 'preference' as const,
+      })),
+      ...initialPreferences.filter(p => p.category === 'flexible'),
+    ];
+    setPreferences(newPreferences);
+  }, []);
 
   // Reset helper
   const handleReset = () => {
     setCurrentScreen(1);
     setSelectedOption('A');
-    setPreferences(initialPreferences);
+    setPreferences(initialPreferences.filter(p => p.category === 'flexible'));
     setVoiceStatus('idle');
     setShowCheckoutModal(false);
+    setGeminiAnalysis(null);
+    setGeminiStreamText('');
+    setGeminiError(null);
   };
 
   const selectedData = tradeOffOptions.find(o => o.id === selectedOption) || tradeOffOptions[0];
 
-  return (
+  const vbApiKey = import.meta.env.VITE_VOCAL_BRIDGE_API_KEY as string | undefined;
+
+  const content = (
     <div className="min-h-screen bg-brand-cream flex flex-col font-sans text-brand-charcoal select-none antialiased selection:bg-brand-accent/20">
       
       {/* Premium Top Navigation Bar */}
@@ -50,7 +88,7 @@ export default function App() {
             <div className="w-3.5 h-3.5 bg-brand-cream rotate-45" />
           </div>
           <div>
-            <h1 className="text-sm font-sans font-bold uppercase tracking-widest text-brand-charcoal">ExperienceLink</h1>
+            <h1 className="text-sm font-sans font-bold uppercase tracking-widest text-brand-charcoal">Take Me There</h1>
             <p className="text-[9px] text-brand-charcoal/40 leading-none font-mono uppercase tracking-widest">Creator affiliate adaptor &bull; Hackathon Build</p>
           </div>
         </div>
@@ -114,7 +152,22 @@ export default function App() {
             
             {/* Left/Center: Mobile phone preview */}
             <div className="lg:col-span-6 flex justify-center">
-              <MobileFrame>
+              <MobileFrame
+                currentScreen={currentScreen}
+                totalScreens={6}
+                onBack={() => {
+                  const prevMap: Record<number, number> = {
+                    7: 1, // Gemini analysis → Instagram post screen
+                    3: 7, // Preference confirmation → Gemini analysis screen
+                    2: 3, // Voice input → Preference confirmation
+                    4: 3, // Trade-off → Preference confirmation
+                    5: 4, // Itinerary → Trade-off
+                    6: 5, // Final/booking → Itinerary
+                  };
+                  const prev = prevMap[currentScreen];
+                  if (prev !== undefined) setCurrentScreen(prev);
+                }}
+              >
                 <Screens 
                   currentScreen={currentScreen}
                   setScreen={setCurrentScreen}
@@ -126,6 +179,11 @@ export default function App() {
                   setVoiceStatus={setVoiceStatus}
                   onReset={handleReset}
                   setShowCheckoutModal={setShowCheckoutModal}
+                  onGeminiToken={handleGeminiToken}
+                  onGeminiComplete={handleGeminiComplete}
+                  geminiAnalysis={geminiAnalysis}
+                  geminiError={geminiError}
+                  onGeminiError={setGeminiError}
                 />
               </MobileFrame>
             </div>
@@ -136,6 +194,9 @@ export default function App() {
                 currentScreen={currentScreen}
                 preferences={preferences}
                 selectedOption={selectedOption}
+                geminiStreamText={geminiStreamText}
+                geminiAnalysis={geminiAnalysis}
+                geminiError={geminiError}
               />
             </div>
 
@@ -225,7 +286,7 @@ export default function App() {
 
       {/* Styled Footer */}
       <footer className="bg-brand-cream/50 py-4 px-6 border-t border-brand-charcoal/5 text-center text-[10px] text-brand-charcoal/40 font-mono flex flex-col sm:flex-row justify-between items-center gap-2">
-        <span>© 2026 ExperienceLink &bull; Hackathon Prototype Build v1.0.0</span>
+        <span>© 2026 Take Me There &bull; Hackathon Prototype Build v1.0.0</span>
         <div className="flex gap-4">
           <span className="hover:text-brand-charcoal cursor-pointer">Attribution Rules</span>
           <span className="hover:text-brand-charcoal cursor-pointer">Solver API Specs</span>
@@ -234,5 +295,15 @@ export default function App() {
       </footer>
 
     </div>
+  );
+
+  return vbApiKey ? (
+    <VocalBridgeProvider options={{ auth: { apiKey: vbApiKey }, participantName: 'Nicole' }}>
+      {content}
+    </VocalBridgeProvider>
+  ) : (
+    <VocalBridgeProvider options={{ auth: { apiKey: 'no-key-configured' }, participantName: 'Nicole' }}>
+      {content}
+    </VocalBridgeProvider>
   );
 }

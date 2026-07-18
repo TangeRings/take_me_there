@@ -13,7 +13,7 @@ export const originalExperience: OriginalExperience = {
     avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=200&auto=format&fit=crop",
     bio: "Design researcher and slow traveler focusing on cultural craft, quiet neighborhood stays, and local foodways."
   },
-  description: "A quiet four-to-seven-day Kyoto experience centered on design, local food, walkable neighborhoods, and a boutique stay in Gion. The trip values atmosphere over checking off famous attractions.",
+  description: "A quiet four-to-seven-day Kyoto experience built around design, local food, walkable neighborhoods, and a proper ryokan stay in Gion. We spent most nights at Gion Ryokan Karaku (499 Minamigawa Gionmachi, Higashiyama-ku, Kyoto 605-0074) — a meticulously restored machiya that felt completely woven into the neighborhood. The trip values atmosphere over sightseeing checklists.",
   signatureElements: [
     {
       id: "el-hotel",

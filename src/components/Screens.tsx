@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { VoiceSheet } from './VoiceSheet';
 import { 
   originalExperience, 
   tradeOffOptions 
@@ -6,8 +7,10 @@ import {
 import { 
   PreferenceItem, 
   TradeOffOption, 
-  PreferenceCategory 
+  PreferenceCategory,
+  GeminiAnalysis
 } from '../types';
+import { analyzeInstagramPost } from '../services/gemini';
 import { 
   Share2, 
   Bookmark, 
@@ -48,6 +51,11 @@ interface ScreenProps {
   setVoiceStatus: (v: 'idle' | 'listening' | 'analyzing' | 'done') => void;
   onReset: () => void;
   setShowCheckoutModal: (b: boolean) => void;
+  onGeminiToken: (token: string) => void;
+  onGeminiComplete: (analysis: GeminiAnalysis) => void;
+  onGeminiError: (msg: string) => void;
+  geminiAnalysis?: GeminiAnalysis | null;
+  geminiError?: string | null;
 }
 
 export const Screens: React.FC<ScreenProps> = ({
@@ -60,12 +68,15 @@ export const Screens: React.FC<ScreenProps> = ({
   voiceStatus,
   setVoiceStatus,
   onReset,
-  setShowCheckoutModal
+  setShowCheckoutModal,
+  onGeminiToken,
+  onGeminiComplete,
+  onGeminiError,
+  geminiAnalysis,
+  geminiError,
 }) => {
   // Voice input transcription state
-  const [typedVoiceText, setTypedVoiceText] = useState(
-    "I want a similar experience, but I only have four days and my total budget is around $1,800. I really love the hotel. The rest is flexible."
-  );
+  const [typedVoiceText, setTypedVoiceText] = useState('');
 
   // New States for Instagram-feel, Gemini-scan, voice bottom-sheet, and manual settings
   const [carouselIndex, setCarouselIndex] = useState(0);
@@ -75,6 +86,8 @@ export const Screens: React.FC<ScreenProps> = ({
   const [activeVoiceModifier, setActiveVoiceModifier] = useState(false);
   const [voiceModifierText, setVoiceModifierText] = useState("");
   const [voiceModifierSuccess, setVoiceModifierSuccess] = useState<string | null>(null);
+  // Voice overlay sheet shown on top of the curation adapter page
+  const [showVoiceSheet, setShowVoiceSheet] = useState(false);
 
   // Big options for Mapping Preferences easily
   const [travelerTier, setTravelerTier] = useState<'luxury' | 'medium' | 'budget'>('luxury');
@@ -84,31 +97,108 @@ export const Screens: React.FC<ScreenProps> = ({
   const [visionProgress, setVisionProgress] = useState(0);
   const [visionStep, setVisionStep] = useState(0);
 
+  // Parse raw Gemini/API error into a human-readable one-liner
+  function cleanGeminiError(raw: string): string {
+    try {
+      // The SDK sometimes wraps a JSON string inside an Error message
+      const outer = JSON.parse(raw);
+      const inner = outer?.error?.message ?? raw;
+      // inner may itself be a JSON string
+      try {
+        const parsed = JSON.parse(inner);
+        const msg: string = parsed?.error?.message ?? inner;
+        const reason: string = parsed?.error?.details?.[0]?.reason ?? '';
+        if (reason === 'API_KEY_SERVICE_BLOCKED') {
+          return '403 — API key blocked. Get a free key at aistudio.google.com/apikey and set it as VITE_GEMINI_API_KEY in .env.local';
+        }
+        if (reason === 'API_KEY_INVALID') {
+          return '401 — Invalid API key. Double-check VITE_GEMINI_API_KEY in .env.local';
+        }
+        const code: number = parsed?.error?.code ?? 0;
+        return `${code ? code + ' — ' : ''}${msg}`;
+      } catch {
+        return inner;
+      }
+    } catch {
+      if (raw.includes('API_KEY_SERVICE_BLOCKED')) {
+        return '403 — API key blocked. Get a free key at aistudio.google.com/apikey';
+      }
+      if (raw.includes('API_KEY_INVALID')) return '401 — Invalid API key.';
+      return raw.length > 200 ? raw.slice(0, 200) + '…' : raw;
+    }
+  }
+
   // Loading state for search
   const [searchProgress, setSearchProgress] = useState(0);
   const [searchStep, setSearchStep] = useState("Accessing Gion hotel inventories...");
 
-  // Gemini Vision Scan Effect
   useEffect(() => {
-    if (currentScreen === 7) {
-      setVisionProgress(0);
-      setVisionStep(0);
-      const interval = setInterval(() => {
-        setVisionProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            // Stop and let user confirm extracted details before proceeding
-            return 100;
-          }
-          const next = prev + 5;
-          if (next === 25) setVisionStep(1);
-          if (next === 55) setVisionStep(2);
-          if (next === 80) setVisionStep(3);
-          return next;
+    if (currentScreen !== 7) return;
+
+    let cancelled = false;
+    setVisionProgress(0);
+    setVisionStep(0);
+    onGeminiError('');   // clear any previous error
+
+    const apiKey = (import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY) as string | undefined;
+
+    const carouselImages = [
+      "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?q=80&w=600&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=600&auto=format&fit=crop",
+    ];
+
+    const ticker = setInterval(() => {
+      if (cancelled) return;
+      setVisionProgress(prev => {
+        if (prev >= 90) return prev;
+        const next = prev + 2;
+        if (next >= 25 && next < 27) setVisionStep(1);
+        if (next >= 55 && next < 57) setVisionStep(2);
+        if (next >= 80 && next < 82) setVisionStep(3);
+        return next;
+      });
+    }, 120);
+
+    if (!apiKey) {
+      onGeminiError('No API key found. Add VITE_GEMINI_API_KEY=your_key to .env.local and restart the dev server.');
+      const fallback = setInterval(() => {
+        if (cancelled) { clearInterval(fallback); return; }
+        setVisionProgress(prev => {
+          if (prev >= 100) { clearInterval(fallback); return 100; }
+          return prev + 5;
         });
-      }, 100);
-      return () => clearInterval(interval);
+      }, 150);
+      clearInterval(ticker);
+      return () => { cancelled = true; clearInterval(fallback); };
     }
+
+    console.log('[TakeMeThere] Calling Gemini with key:', apiKey.slice(0, 8) + '…');
+
+    analyzeInstagramPost(carouselImages, originalExperience.description, onGeminiToken, apiKey)
+      .then(analysis => {
+        if (cancelled) return;
+        console.log('[TakeMeThere] Gemini analysis complete:', analysis);
+        clearInterval(ticker);
+        setVisionStep(4);
+        setVisionProgress(100);
+        onGeminiComplete(analysis);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        clearInterval(ticker);
+        const raw = err instanceof Error ? err.message : String(err);
+        console.error('[TakeMeThere] Gemini error:', raw);
+        // Stay on scanning screen (don't snap to 100%) so user sees it failed, not succeeded
+        setVisionProgress(prev => Math.max(prev, 90)); // park at 90% to show it got stuck
+        onGeminiError(cleanGeminiError(raw));
+      });
+
+    return () => {
+      cancelled = true;
+      clearInterval(ticker);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentScreen]);
 
   useEffect(() => {
@@ -166,8 +256,11 @@ export const Screens: React.FC<ScreenProps> = ({
   if (currentScreen === 1) {
     const carouselImages = [
       "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600&auto=format&fit=crop", // Kyoto street
-      "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?q=80&w=600&auto=format&fit=crop", // The Shinmonzen Hotel
-      "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=600&auto=format&fit=crop"  // Kaiseki Japanese Dining
+      "/images/hotel1.png", // Gion Ryokan Karaku — hotel photo 1
+      "/images/hotel2.png", // Gion Ryokan Karaku — hotel photo 2
+      "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=600&auto=format&fit=crop", // Kaiseki Japanese Dining
+      "https://images.unsplash.com/photo-1528360983277-13d401cdc186?q=80&w=600&auto=format&fit=crop", // Fushimi Inari torii gates
+      "https://images.unsplash.com/photo-1545569341-9eb8b30979d9?q=80&w=600&auto=format&fit=crop",  // Arashiyama bamboo grove
     ];
 
     return (
@@ -275,12 +368,20 @@ export const Screens: React.FC<ScreenProps> = ({
           Liked by design_curator and 1,248 others
         </div>
 
-        {/* Caption & Comments */}
-        <div className="px-3.5 pb-4 space-y-2 text-xs flex-grow">
-          <div>
-            <span className="font-semibold text-stone-900 mr-1.5">{originalExperience.creator.handle}</span>
-            <span className="text-stone-800 leading-relaxed font-sans">{originalExperience.description}</span>
-          </div>
+          {/* Caption & Comments */}
+          <div className="px-3.5 pb-4 space-y-2 text-xs flex-grow">
+            <div>
+              <span className="font-semibold text-stone-900 mr-1.5">{originalExperience.creator.handle}</span>
+              <span className="text-stone-800 leading-relaxed font-sans">{originalExperience.description}</span>
+            </div>
+
+            {/* Affiliate discount banner */}
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/60 rounded-xl px-3 py-2 flex items-center gap-2 text-[11px]">
+              <span className="text-base leading-none">🏷️</span>
+              <p className="text-amber-800 font-medium leading-snug">
+                Book via my affiliate link &amp; get <strong>5–10% off</strong> your stay! 🔗✨
+              </p>
+            </div>
 
           <div className="flex flex-wrap gap-1.5 pt-0.5">
             {originalExperience.tags.map((tag, i) => (
@@ -338,7 +439,8 @@ export const Screens: React.FC<ScreenProps> = ({
       }
     ];
 
-    const isScanComplete = visionProgress >= 100;
+    const isScanComplete = visionProgress >= 100 && !geminiError;
+    const isError = !!(geminiError);
 
     return (
       <div id="screen-gemini-vision" className="flex flex-col h-full bg-[#0a0a0a] text-stone-100 overflow-y-auto p-4 justify-between">
@@ -348,17 +450,36 @@ export const Screens: React.FC<ScreenProps> = ({
             <Sparkles className="w-3 h-3 text-purple-400 animate-spin" />
             Gemini Multimodal Analysis
           </span>
-          <span className="text-[9px] font-mono text-stone-400">Model: gemini-3.5-flash</span>
+          <span className="text-[9px] font-mono text-stone-400">
+            {(import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.GEMINI_API_KEY) ? 'gemini-3.5-flash · live' : 'no key · simulation'}
+          </span>
         </div>
 
         {/* Analyzer Grid Screen */}
-        <div className="flex-grow py-4 flex flex-col justify-center space-y-4">
-          {!isScanComplete ? (
-            <>
+        <div className="flex-grow py-4 flex flex-col overflow-y-auto space-y-4">
+          {isError ? (
+            /* Error state — stays on scan screen so user knows it failed */
+            <div className="space-y-4 animate-fade-in">
+              <div className="text-center space-y-2">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 mb-1">
+                  <AlertCircle className="w-6 h-6" />
+                </div>
+                <h3 className="text-base font-bold text-white font-serif">Analysis Failed</h3>
+              </div>
+              <div className="bg-red-950/30 border border-red-500/30 rounded-xl p-3.5 space-y-2">
+                <p className="text-[10px] font-mono text-red-300 uppercase tracking-wider font-bold">Error</p>
+                <p className="text-[11px] text-red-200 leading-relaxed">{geminiError}</p>
+              </div>
+            </div>
+          ) : !isScanComplete ? (
+            <div className="flex flex-col justify-center flex-grow space-y-4">
               <div className="text-center space-y-1">
                 <h3 className="text-sm font-semibold tracking-wide uppercase text-white font-sans">Scanning Post Media & Curation</h3>
                 <p className="text-[11px] text-stone-400 leading-relaxed max-w-xs mx-auto">
-                  Simulating multimodal visual recognition and natural language synthesis to extract trip DNA.
+                  {import.meta.env.VITE_GEMINI_API_KEY
+                    ? "Gemini is analyzing images and caption to extract the trip blueprint."
+                    : "Simulating multimodal visual recognition and natural language synthesis to extract trip DNA."
+                  }
                 </p>
               </div>
 
@@ -426,7 +547,7 @@ export const Screens: React.FC<ScreenProps> = ({
                   <div className="h-full bg-gradient-to-r from-purple-500 to-indigo-500 transition-all duration-150" style={{ width: `${visionProgress}%` }} />
                 </div>
               </div>
-            </>
+            </div>
           ) : (
             /* DNA Extraction Success Summary Page */
             <div className="space-y-4 animate-fade-in">
@@ -435,48 +556,91 @@ export const Screens: React.FC<ScreenProps> = ({
                   <Check className="w-6 h-6" />
                 </div>
                 <h3 className="text-base font-bold text-white font-serif">Trip Anchors Successfully Extracted!</h3>
-                <p className="text-xs text-stone-400 max-w-xs mx-auto">
-                  Gemini has digested @mayaexplores' post details and designed a customizable skeleton trip blueprint.
-                </p>
+
+                {/* Discount callout */}
+                <div className="mt-1 bg-gradient-to-r from-amber-500/15 to-orange-500/10 border border-amber-400/30 rounded-xl px-4 py-2.5 text-center">
+                  <p className="text-amber-300 font-bold text-sm leading-snug">🏷️ Potential Hotel Discount</p>
+                  <p className="text-amber-200 text-xl font-black tracking-tight mt-0.5">5 – 10%</p>
+                  <p className="text-amber-400/70 text-[10px] font-mono mt-0.5">via creator affiliate link 🔗</p>
+                </div>
               </div>
 
-              {/* Extracted Blueprint Details Card */}
+              {/* Extracted Blueprint Details Card — driven by real Gemini output when available */}
               <div className="bg-white/5 border border-white/10 rounded-2xl p-4 space-y-3">
                 <h4 className="text-[10px] font-mono text-purple-400 uppercase font-bold tracking-wider">Identified Flagships</h4>
                 
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between border-b border-white/5 pb-1.5">
-                    <span className="text-stone-400">Anchor Lodging:</span>
-                    <span className="text-white font-semibold">The Shinmonzen (Luxury)</span>
+                    <span className="text-stone-400">Destination:</span>
+                    <span className={`font-semibold ${geminiAnalysis?.destination === 'NA' ? 'text-stone-500 italic' : 'text-white'}`}>
+                      {geminiAnalysis?.destination ?? '—'}
+                    </span>
                   </div>
                   <div className="flex justify-between border-b border-white/5 pb-1.5">
-                    <span className="text-stone-400">Signature Scene:</span>
-                    <span className="text-white font-semibold">Yasaka Pagoda & Gion Streets</span>
+                    <span className="text-stone-400">Experience Type:</span>
+                    <span className={`font-semibold ${geminiAnalysis?.experienceType === 'NA' ? 'text-stone-500 italic' : 'text-white'}`}>
+                      {geminiAnalysis?.experienceType ?? '—'}
+                    </span>
                   </div>
                   <div className="flex justify-between border-b border-white/5 pb-1.5">
-                    <span className="text-stone-400">Gastronomy:</span>
-                    <span className="text-white font-semibold">9-Course Kaiseki Dinner</span>
-                  </div>
-                  <div className="flex justify-between">
                     <span className="text-stone-400">Travel Pace:</span>
-                    <span className="text-white font-semibold">Design-Centric Slow Travel</span>
+                    <span className={`font-semibold ${geminiAnalysis?.pace === 'NA' ? 'text-stone-500 italic' : 'text-white'}`}>
+                      {geminiAnalysis?.pace ?? '—'}
+                    </span>
+                  </div>
+                  {geminiAnalysis?.budgetEstimate && geminiAnalysis.budgetEstimate !== 'NA' && (
+                    <div className="flex justify-between border-b border-white/5 pb-1.5">
+                      <span className="text-stone-400">Budget Hint:</span>
+                      <span className="text-emerald-400 font-semibold">{geminiAnalysis.budgetEstimate}</span>
+                    </div>
+                  )}
+                  <div className="pt-0.5">
+                    <span className="text-stone-400 block mb-1.5">Keywords:</span>
+                    {(geminiAnalysis?.keywords ?? []).length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {(geminiAnalysis?.keywords ?? []).map((kw, i) => (
+                          <span key={i} className="text-[9px] font-mono px-2 py-0.5 bg-emerald-950/40 text-emerald-200 border border-emerald-500/20 rounded">
+                            {kw}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[9px] font-mono text-stone-500 italic">NA — not extracted</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Location + Hotel Info — always visible */}
+                <div className="border-t border-white/10 pt-3 space-y-2 text-xs">
+                  <div className="flex justify-between items-start">
+                    <span className="text-stone-400 flex-shrink-0">Your Location:</span>
+                    <span className="font-semibold text-white text-right">San Francisco, CA</span>
+                  </div>
+                  <div className="flex justify-between items-start gap-2">
+                    <span className="text-stone-400 flex-shrink-0">Target Hotel:</span>
+                    <div className="text-right">
+                      {geminiAnalysis?.hotelName && geminiAnalysis.hotelName !== 'NA' ? (
+                        <>
+                          <div className="flex items-center justify-end gap-2 mb-0.5">
+                            <img
+                              src="/images/hotel2.png"
+                              alt="Hotel"
+                              className="w-8 h-8 rounded-lg object-cover border border-white/10 flex-shrink-0"
+                            />
+                            <p className="font-semibold text-white leading-tight">{geminiAnalysis.hotelName}</p>
+                          </div>
+                          {geminiAnalysis.hotelAddress && geminiAnalysis.hotelAddress !== 'NA' && (
+                            <p className="text-stone-400 text-[10px] mt-0.5 leading-snug">{geminiAnalysis.hotelAddress}</p>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-stone-500 italic">N/A</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Cognitive Rule Highlight explaining luxury logic */}
-              <div className="bg-purple-950/20 border border-purple-500/30 rounded-2xl p-3.5 space-y-2">
-                <div className="flex items-center gap-1.5 text-purple-400">
-                  <Sparkles className="w-4 h-4 text-purple-400 animate-pulse" />
-                  <span className="text-[10px] font-mono uppercase font-bold tracking-wider">Behind-the-Scenes Cognitive Inference</span>
-                </div>
-                <p className="text-[11px] text-stone-300 leading-relaxed font-sans">
-                  <strong>Luxury Property Retention:</strong> Since Nicole insists on keeping <em>The Shinmonzen Boutique Hotel</em>, our core engine infers she is <strong>not strictly price-sensitive</strong> for key aesthetic markers.
-                </p>
-                <p className="text-[10px] text-stone-400 leading-relaxed font-sans italic">
-                  Rule applied: Preserve luxury stays. Minimize budget conflicts by optimizing flight times, off-peak date shifts, or splitting secondary nights rather than substituting the main hotel.
-                </p>
-              </div>
             </div>
           )}
         </div>
@@ -491,6 +655,21 @@ export const Screens: React.FC<ScreenProps> = ({
               <span>Confirm Anchors & Customize</span>
               <ArrowRight className="w-4 h-4 text-white" />
             </button>
+          ) : isError ? (
+            <>
+              <button
+                onClick={() => setScreen(3)}
+                className="w-full bg-white/10 hover:bg-white/15 text-white py-2.5 rounded-full text-xs font-semibold font-sans tracking-wide cursor-pointer transition-all text-center"
+              >
+                Skip to Customize anyway →
+              </button>
+              <button
+                onClick={() => onReset()}
+                className="w-full bg-transparent text-white/40 py-2 rounded-full text-xs font-sans cursor-pointer text-center hover:text-white/70 transition-colors"
+              >
+                ← Back to post
+              </button>
+            </>
           ) : (
             <button 
               onClick={() => setScreen(3)}
@@ -508,8 +687,11 @@ export const Screens: React.FC<ScreenProps> = ({
   if (currentScreen === 2) {
     const carouselImages = [
       "https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?q=80&w=600&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1542314831-068cd1dbfeeb?q=80&w=600&auto=format&fit=crop",
-      "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=600&auto=format&fit=crop"
+      "/images/hotel1.png",
+      "/images/hotel2.png",
+      "https://images.unsplash.com/photo-1503899036084-c55cdd92da26?q=80&w=600&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1528360983277-13d401cdc186?q=80&w=600&auto=format&fit=crop",
+      "https://images.unsplash.com/photo-1545569341-9eb8b30979d9?q=80&w=600&auto=format&fit=crop",
     ];
 
     return (
@@ -611,9 +793,41 @@ export const Screens: React.FC<ScreenProps> = ({
             </button>
             <button 
               onClick={() => {
+                // Parse voice transcript for hard constraints
+                const text = typedVoiceText.toLowerCase();
+
+                const constraints: import('../types').PreferenceItem[] = [];
+
+                // Days / duration
+                const daysMatch = text.match(/(\w+|\d+)\s+days?/);
+                if (daysMatch) {
+                  const raw = daysMatch[1];
+                  const words: Record<string, string> = { one:'1',two:'2',three:'3',four:'4',five:'5',six:'6',seven:'7',eight:'8',nine:'9',ten:'10' };
+                  const num = words[raw] ?? raw;
+                  constraints.push({ id: 'c-days', text: `${num} day${num === '1' ? '' : 's'} maximum`, category: 'hard-constraint' });
+                }
+
+                // Budget
+                const budgetMatch = text.match(/\$[\d,]+|\d[\d,]*\s*dollars?/);
+                if (budgetMatch) {
+                  constraints.push({ id: 'c-budget', text: `Total budget around ${budgetMatch[0].replace(/dollars?/, '').trim()}`, category: 'hard-constraint' });
+                }
+
+                // Departure airport / city
+                const airportMatch = typedVoiceText.match(/\b([A-Z]{3})\b/) || typedVoiceText.match(/(?:from|depart(?:ing)?\s+from)\s+([\w\s]+?)(?:[,.]|$)/i);
+                if (airportMatch) {
+                  constraints.push({ id: 'c-origin', text: `Departing from ${airportMatch[1].trim()}`, category: 'hard-constraint' });
+                }
+
+                if (constraints.length > 0) {
+                  setPreferences(prev => [
+                    ...prev.filter(p => p.category !== 'hard-constraint'),
+                    ...constraints
+                  ]);
+                }
+
                 setVoiceStatus('analyzing');
                 setScreen(4);
-                // Bypassing drag-and-drop manual preference, resolving immediately!
               }}
               className="col-span-4 bg-brand-charcoal hover:bg-brand-charcoal/90 text-white font-sans uppercase tracking-widest py-3 px-4 rounded-full text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
             >
@@ -644,9 +858,9 @@ export const Screens: React.FC<ScreenProps> = ({
     ];
 
     return (
-      <div id="screen-pref-confirmation" className="flex flex-col h-full bg-brand-cream overflow-y-auto">
+      <div id="screen-pref-confirmation" className="flex flex-col h-full bg-brand-cream relative overflow-hidden">
         {/* Sticky Header */}
-        <div className="flex items-center justify-between p-4 border-b border-brand-charcoal/5 bg-white/40 backdrop-blur-sm sticky top-0 z-10">
+        <div className="flex items-center justify-between p-4 border-b border-brand-charcoal/5 bg-white/40 backdrop-blur-sm sticky top-0 z-10 flex-shrink-0">
           <button onClick={() => setScreen(7)} className="text-xs text-brand-charcoal/60 hover:text-brand-charcoal">
             ← Back
           </button>
@@ -654,6 +868,8 @@ export const Screens: React.FC<ScreenProps> = ({
           <div className="w-10"></div>
         </div>
 
+        {/* Scrollable content */}
+        <div className="flex-grow overflow-y-auto">
         {/* Intro */}
         <div className="p-4 space-y-1">
           <span className="text-[9px] font-mono uppercase tracking-widest text-brand-accent font-bold">Step 2: Map Curation Settings</span>
@@ -797,12 +1013,13 @@ export const Screens: React.FC<ScreenProps> = ({
             These preferences map directly to the backstage decision solver and feed the acoustic parser.
           </p>
         </div>
+        </div>{/* end scrollable content */}
 
         {/* CTA Double-Row Actions */}
-        <div className="p-4 bg-white border-t border-brand-charcoal/5 sticky bottom-0 z-10 space-y-2 flex-shrink-0">
+        <div className="p-4 bg-white border-t border-brand-charcoal/5 z-10 space-y-2 flex-shrink-0">
           <div className="grid grid-cols-2 gap-2">
             <button 
-              onClick={() => setScreen(2)}
+              onClick={() => setShowVoiceSheet(true)}
               className="w-full bg-brand-cream hover:bg-brand-beige border border-brand-charcoal/10 text-brand-charcoal font-sans uppercase tracking-widest py-3 px-4 rounded-full text-[9px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
             >
               <Volume2 className="w-3.5 h-3.5 text-brand-accent animate-pulse" />
@@ -819,6 +1036,25 @@ export const Screens: React.FC<ScreenProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Voice assistant bottom sheet — Vocal Bridge connected */}
+        {showVoiceSheet && (
+          <div className="absolute inset-x-0 bottom-0 z-50">
+            <VoiceSheet
+              onClose={() => setShowVoiceSheet(false)}
+              onConfirm={(constraints) => {
+                setPreferences(prev => [
+                  ...prev.filter(p => p.category !== 'hard-constraint'),
+                  ...constraints,
+                ]);
+                setShowVoiceSheet(false);
+                setVoiceStatus('analyzing');
+                setScreen(4);
+              }}
+              geminiAnalysis={geminiAnalysis}
+            />
+          </div>
+        )}
       </div>
     );
   }

@@ -179,6 +179,45 @@ export const IntelligencePanel: React.FC<IntelligencePanelProps> = ({
               </div>
 
               <div className="bg-white/5 rounded-xl p-3 border border-white/5 space-y-2 text-xs">
+
+                {/* Dedicated rows for key voice-extracted travel details */}
+                {(() => {
+                  const hardItems = getItemsByCat('hard-constraint');
+                  const dateItem = hardItems.find(p => p.id === 'vb-kw-travel_date');
+                  const peopleItem = hardItems.find(p => p.id === 'vb-kw-num_people');
+                  const budgetItem = hardItems.find(p => p.id === 'vb-kw-budget');
+                  const flightItem = preferences.find(p => p.id === 'p-flights' && p.text !== 'Direct vs. connecting flight');
+                  if (!dateItem && !peopleItem && !budgetItem && !flightItem) return null;
+                  return (
+                    <div className="grid grid-cols-2 gap-1.5 pb-2 border-b border-white/5">
+                      {dateItem && (
+                        <div className="bg-white/5 rounded-lg px-2 py-1.5 text-center">
+                          <span className="text-white/30 block text-[8px] font-mono uppercase tracking-wider">Dates</span>
+                          <span className="text-white/90 text-[10px] font-semibold leading-snug block mt-0.5">📅 {dateItem.text}</span>
+                        </div>
+                      )}
+                      {peopleItem && (
+                        <div className="bg-white/5 rounded-lg px-2 py-1.5 text-center">
+                          <span className="text-white/30 block text-[8px] font-mono uppercase tracking-wider">Party</span>
+                          <span className="text-white/90 text-[10px] font-semibold leading-snug block mt-0.5">👥 {peopleItem.text}</span>
+                        </div>
+                      )}
+                      {budgetItem && (
+                        <div className="bg-white/5 rounded-lg px-2 py-1.5 text-center">
+                          <span className="text-white/30 block text-[8px] font-mono uppercase tracking-wider">Budget</span>
+                          <span className="text-emerald-400 text-[10px] font-semibold leading-snug block mt-0.5">💰 {budgetItem.text}</span>
+                        </div>
+                      )}
+                      {flightItem && (
+                        <div className="bg-white/5 rounded-lg px-2 py-1.5 text-center">
+                          <span className="text-white/30 block text-[8px] font-mono uppercase tracking-wider">Flight</span>
+                          <span className="text-sky-300 text-[10px] font-semibold leading-snug block mt-0.5">✈️ {flightItem.text}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="grid grid-cols-2 gap-2 text-[10px]">
                   <div className="bg-red-500/10 border border-red-500/20 p-2 rounded-lg">
                     <span className="text-red-300 block font-mono uppercase tracking-widest font-bold text-[8px]">HARD CONSTRAINTS</span>

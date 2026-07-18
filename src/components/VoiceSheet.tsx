@@ -4,7 +4,7 @@ import { Mic, MicOff, X, Sparkles } from 'lucide-react';
 import { PreferenceItem, GeminiAnalysis } from '../types';
 
 interface ExtractedKeyword {
-  type: 'travel_date' | 'num_people' | 'budget' | 'hotel_pref' | 'other';
+  type: 'travel_date' | 'num_people' | 'budget' | 'hotel_pref' | 'flight_pref' | 'other';
   value: string;
 }
 
@@ -13,17 +13,19 @@ const KEYWORD_EMOJI: Record<ExtractedKeyword['type'], string> = {
   num_people: '👥',
   budget:     '💰',
   hotel_pref: '🏨',
+  flight_pref: '✈️',
   other:      '📌',
 };
 
 interface VoiceSheetProps {
   onClose: () => void;
   onConfirm: (constraints: PreferenceItem[]) => void;
+  onKeywordUpdate?: (pref: PreferenceItem) => void;
   geminiAnalysis?: GeminiAnalysis | null;
 }
 
-export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, geminiAnalysis }) => {
-  const { state, connect, disconnect, sendAction } = useVocalBridge();
+export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, onKeywordUpdate, geminiAnalysis }) => {
+  const { state, connect, disconnect, sendAction, setMicrophoneEnabled } = useVocalBridge();
   const { transcript } = useTranscript();
   const { onAction } = useAgentActions();
   const [keywords, setKeywords] = useState<ExtractedKeyword[]>([]);
@@ -44,6 +46,12 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, gemi
         const filtered = prev.filter(k => k.type !== kw.type);
         return [...filtered, kw];
       });
+      // Sync to app preferences in real-time for Sabre context
+      onKeywordUpdate?.({
+        id: kw.type === 'flight_pref' ? 'p-flights' : `vb-kw-${kw.type}`,
+        text: kw.value,
+        category: 'hard-constraint',
+      });
     });
     const unsubDone = onAction('preferences_complete', (payload) => {
       const { constraints } = payload as { constraints: string[] };
@@ -55,15 +63,28 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, gemi
   const isConnected = state === 'connected';
   const isConnecting = state === 'connecting';
 
+  // Show hotel card only when the agent has mentioned the hotel name in transcript
+  const hotelName = geminiAnalysis?.hotelName && geminiAnalysis.hotelName !== 'NA'
+    ? geminiAnalysis.hotelName
+    : null;
+  const hotelMentioned = hotelName !== null && transcript.some(entry =>
+    entry.text.toLowerCase().includes(hotelName.toLowerCase().split(' ')[0]) ||
+    entry.text.toLowerCase().includes('hotel') ||
+    entry.text.toLowerCase().includes('ryokan') ||
+    entry.text.toLowerCase().includes('stay')
+  );
+
   const handleMicClick = async () => {
     if (isConnected) {
       await disconnect();
     } else if (!isConnecting) {
       try {
         await connect();
-        // Push Gemini post context to the agent immediately after connecting
+        // Mute mic while context loads so user can't speak before agent has context
+        await setMicrophoneEnabled(false);
+        // Send Gemini post data as a notify action (silently injected into agent context)
         if (geminiAnalysis) {
-          sendAction('context', {
+          await sendAction('initialize_context', {
             destination: geminiAnalysis.destination,
             hotelName: geminiAnalysis.hotelName,
             hotelAddress: geminiAnalysis.hotelAddress,
@@ -74,6 +95,8 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, gemi
             signatureElements: geminiAnalysis.signatureElements,
           });
         }
+        // Re-enable mic once context is delivered
+        await setMicrophoneEnabled(true);
       } catch (e) {
         console.error('VocalBridge connect error:', e);
       }
@@ -107,31 +130,19 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, gemi
       {/* Soft scrim above the sheet */}
       <div className="h-10 bg-gradient-to-t from-black/25 to-transparent pointer-events-none" />
 
-      <div className="bg-white rounded-t-[28px] border-t border-brand-charcoal/5 shadow-[0_-12px_40px_rgba(28,27,25,0.18)] p-5 space-y-4">
+      <div className="bg-white rounded-t-[28px] border-t border-brand-charcoal/5 shadow-[0_-12px_40px_rgba(28,27,25,0.18)] p-5 space-y-3">
         {/* Drawer handle */}
         <div className="w-12 h-1.5 bg-stone-200 rounded-full mx-auto" />
 
-        {/* Header row */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-brand-accent animate-pulse' : 'bg-stone-300'}`} />
-            <span className="text-[10px] uppercase font-mono tracking-widest text-brand-accent font-bold">
-              Vocal Bridge
-            </span>
-          </div>
-          <span className="text-[9px] font-mono text-stone-400">
-            {isConnecting ? 'Connecting…' : isConnected ? 'Listening' : 'Tap mic to start'}
-          </span>
-        </div>
-
-        {/* Flashing microphone button */}
-        <div className="flex flex-col items-center gap-2 py-1">
+        {/* Header row — mic + hotel card side by side */}
+        <div className="flex items-center gap-3">
+          {/* Mic button */}
           <button
             onClick={handleMicClick}
             disabled={isConnecting}
             className={`
-              w-16 h-16 rounded-full flex items-center justify-center transition-all cursor-pointer
-              shadow-lg border-2 disabled:opacity-60 disabled:cursor-wait
+              w-10 h-10 rounded-full flex items-center justify-center transition-all cursor-pointer flex-shrink-0
+              shadow border-2 disabled:opacity-60 disabled:cursor-wait
               ${isConnected
                 ? 'bg-red-500 border-red-400 text-white animate-pulse shadow-red-200'
                 : isConnecting
@@ -140,21 +151,42 @@ export const VoiceSheet: React.FC<VoiceSheetProps> = ({ onClose, onConfirm, gemi
             `}
             aria-label={isConnected ? 'Stop listening' : 'Start listening'}
           >
-            {isConnected
-              ? <MicOff className="w-7 h-7" />
-              : <Mic className="w-7 h-7" />}
+            {isConnected ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
-          <span className="text-[10px] font-mono text-stone-400">
-            {isConnected ? 'Tap to stop' : 'Tap to speak'}
-          </span>
+
+          {/* Hotel card (fades in) or Vocal Bridge label — same slot */}
+          <div className="flex-1 min-w-0 relative h-10">
+            {/* Vocal Bridge label — hidden once hotel appears */}
+            <div className={`absolute inset-0 flex flex-col justify-center transition-opacity duration-300 ${hotelMentioned ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+              <span className="text-[10px] uppercase font-mono tracking-widest text-brand-accent font-bold leading-none">Vocal Bridge</span>
+              <span className="text-[9px] font-mono text-stone-400 leading-none mt-0.5">
+                {isConnecting ? 'Connecting…' : isConnected ? 'Listening' : 'Tap mic to start'}
+              </span>
+            </div>
+            {/* Hotel card — fades in when hotel mentioned */}
+            <div className={`absolute inset-0 flex items-center gap-2 bg-stone-50 border border-stone-100 rounded-xl px-2 transition-opacity duration-500 ${hotelMentioned ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+              <img
+                src="/images/hotel2.png"
+                alt="Hotel"
+                className="w-8 h-8 rounded-lg object-cover border border-white shadow-sm flex-shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-[8px] font-mono uppercase tracking-wider text-stone-400 leading-none">Target Hotel</p>
+                <p className="text-[11px] font-semibold text-brand-charcoal leading-tight truncate">{hotelName}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Live indicator dot */}
+          <span className={`w-2 h-2 rounded-full flex-shrink-0 ${isConnected ? 'bg-brand-accent animate-pulse' : 'bg-stone-200'}`} />
         </div>
 
         {/* Live Transcript */}
         <div className="bg-brand-cream/80 rounded-2xl border border-brand-charcoal/5 overflow-hidden">
-          <div className="px-3 pt-2 pb-1 border-b border-brand-charcoal/5 flex items-center gap-1.5">
+          <div className="px-3 pt-2 pb-1 border-b border-brand-charcoal/5">
             <span className="text-[9px] font-mono uppercase tracking-wider text-stone-400 font-bold">Live Transcript</span>
           </div>
-          <div className="max-h-28 overflow-y-auto px-3 py-2 space-y-1.5">
+          <div className="max-h-24 overflow-y-auto px-3 py-2 space-y-1.5">
             {transcript.length === 0 ? (
               <p className="text-[11px] text-stone-400 italic font-serif">
                 Agent will ask: "When would you like to travel, and how many people are joining?"

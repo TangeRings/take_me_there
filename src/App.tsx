@@ -297,12 +297,18 @@ export default function App() {
     </div>
   );
 
-  return vbApiKey ? (
-    <VocalBridgeProvider options={{ auth: { apiKey: vbApiKey }, participantName: 'Nicole' }}>
-      {content}
-    </VocalBridgeProvider>
-  ) : (
-    <VocalBridgeProvider options={{ auth: { apiKey: 'no-key-configured' }, participantName: 'Nicole' }}>
+  const vbTokenAuth = {
+    tokenUrl: '/api/vb-token',
+    body: geminiAnalysis ? {
+      context_destination: geminiAnalysis.destination,
+      context_hotel: geminiAnalysis.hotelName,
+      context_experience: geminiAnalysis.experienceType,
+      context_keywords: geminiAnalysis.keywords?.join(', '),
+    } : {},
+  };
+
+  return (
+    <VocalBridgeProvider options={{ auth: vbTokenAuth, participantName: 'Nicole' }}>
       {content}
     </VocalBridgeProvider>
   );

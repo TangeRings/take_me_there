@@ -986,17 +986,42 @@ export const Screens: React.FC<ScreenProps> = ({
                       >
                         <span className="text-xs text-brand-charcoal/85 leading-tight font-sans font-medium">{item.text}</span>
                         
-                        {/* Selector control to switch category */}
-                        <select
-                           value={item.category}
-                           onChange={(e) => handleMovePreference(item.id, e.target.value as PreferenceCategory)}
-                           className="text-[9px] font-mono bg-brand-cream hover:bg-brand-beige border border-brand-charcoal/10 rounded px-1.5 py-0.5 text-brand-charcoal focus:outline-none max-w-[85px] cursor-pointer"
-                        >
-                          <option value="must-keep">Keep</option>
-                          <option value="preference">Prefer</option>
-                          <option value="flexible">Flexible</option>
-                          <option value="hard-constraint">Limit</option>
-                        </select>
+                        {/* Flight preference gets a dedicated value selector for Sabre */}
+                        {item.id === 'p-flights' ? (
+                          <select
+                            value={
+                              item.text === 'Direct flight only' ? 'direct'
+                              : item.text === 'Connecting flight OK' ? 'connecting'
+                              : 'flexible'
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const label = val === 'direct' ? 'Direct flight only'
+                                : val === 'connecting' ? 'Connecting flight OK'
+                                : 'Direct vs. connecting flight';
+                              setPreferences(prev => prev.map(p =>
+                                p.id === 'p-flights' ? { ...p, text: label, category: val === 'flexible' ? 'flexible' : 'hard-constraint' } : p
+                              ));
+                            }}
+                            className="text-[9px] font-mono bg-brand-cream hover:bg-brand-beige border border-brand-charcoal/10 rounded px-1.5 py-0.5 text-brand-charcoal focus:outline-none max-w-[100px] cursor-pointer"
+                          >
+                            <option value="flexible">Flexible</option>
+                            <option value="direct">Direct only</option>
+                            <option value="connecting">Connecting OK</option>
+                          </select>
+                        ) : (
+                          /* Generic category selector for all other items */
+                          <select
+                             value={item.category}
+                             onChange={(e) => handleMovePreference(item.id, e.target.value as PreferenceCategory)}
+                             className="text-[9px] font-mono bg-brand-cream hover:bg-brand-beige border border-brand-charcoal/10 rounded px-1.5 py-0.5 text-brand-charcoal focus:outline-none max-w-[85px] cursor-pointer"
+                          >
+                            <option value="must-keep">Keep</option>
+                            <option value="preference">Prefer</option>
+                            <option value="flexible">Flexible</option>
+                            <option value="hard-constraint">Limit</option>
+                          </select>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -1050,6 +1075,12 @@ export const Screens: React.FC<ScreenProps> = ({
                 setShowVoiceSheet(false);
                 setVoiceStatus('analyzing');
                 setScreen(4);
+              }}
+              onKeywordUpdate={(pref) => {
+                setPreferences(prev => [
+                  ...prev.filter(p => p.id !== pref.id),
+                  pref,
+                ]);
               }}
               geminiAnalysis={geminiAnalysis}
             />
